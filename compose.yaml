@@ -1,0 +1,46 @@
+name: synctest
+services:
+  scheduler:
+    build:
+      context: ./
+      dockerfile: ./scheduler/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      COMPOSE_PROJECT_NAME: $COMPOSE_PROJECT_NAME
+      DOCKER_CONTEXT: default
+      LOG_LEVEL: INFO
+      SCHEDULER_TIMEZONE: UTC 
+      SCHEDULE_INTERVAL_MINUTES: 1
+      COMMAND_TIMEOUT_SECONDS: 600
+    # depends_on:
+    #   - web
+    #   - db
+    #   - redis
+    # You can use either command if you want to run a specific script at startup
+    # command: ["bash", "/app/scripts/manage-containers.sh"]
+    # Or just keep the container running and connect to it for manual execution
+    tty: true
+    stdin_open: true
+
+  my-api:
+    image: nginx:alpine
+    container_name: my_api_service
+
+  my-worker:
+    image: alpine:latest
+    command: ["sleep", "infinity"]
+    labels:
+      custom.scheduler.enable: "true"
+      custom.scheduler.action: "exec" 
+      custom.scheduler.command: "echo 'Running periodic check inside worker via docker exec'"
+      custom.scheduler.cron: "*/2 * * * *"
+
+  my-backup-task:
+    image: alpine
+    command: ["echo", "Service definition for run actions"]
+    labels:
+      custom.scheduler.enable: "true"
+      custom.scheduler.action: "run-rm"
+      custom.scheduler.command: "/bin/sh -c 'echo Performing backup task at $(date)'"
+      custom.scheduler.cron: "*/4 * * * *"

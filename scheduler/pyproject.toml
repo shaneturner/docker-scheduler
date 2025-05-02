@@ -1,0 +1,15 @@
+[project]
+name = "compose-scheduler"
+version = "1.0.0"
+description = "A simple Docker Compose scheduler using labels and APScheduler."
+requires-python = ">=3.13" # Keep this constraint
+dependencies = [
+    "APScheduler>=3.9,<4.0",
+    "docker>=7.0,<8.0",
+    "python-dotenv>=1.0,<2.0",
+    "pytz",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
