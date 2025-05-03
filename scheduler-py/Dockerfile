@@ -10,13 +10,13 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Setup the environment
-COPY ./scheduler/pyproject.toml ./scheduler/uv.lock* ./
+COPY ./scheduler-py/pyproject.toml ./scheduler-py/uv.lock* ./
 
 RUN uv venv && \
     uv sync --frozen
 
 # Copy the application code
-COPY ./scheduler/scheduler.py .
+COPY ./scheduler-py/scheduler.py .
 
 # FINAL STAGE: Use the same Python base image for consistency
 FROM python:3.13-alpine

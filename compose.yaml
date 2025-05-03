@@ -3,7 +3,7 @@ services:
   scheduler:
     build:
       context: ./
-      dockerfile: ./scheduler/Dockerfile
+      dockerfile: ./scheduler-py/Dockerfile
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -13,13 +13,6 @@ services:
       SCHEDULER_TIMEZONE: UTC 
       SCHEDULE_INTERVAL_MINUTES: 1
       COMMAND_TIMEOUT_SECONDS: 600
-    # depends_on:
-    #   - web
-    #   - db
-    #   - redis
-    # You can use either command if you want to run a specific script at startup
-    # command: ["bash", "/app/scripts/manage-containers.sh"]
-    # Or just keep the container running and connect to it for manual execution
     tty: true
     stdin_open: true
 
