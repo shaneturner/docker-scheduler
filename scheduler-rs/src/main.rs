@@ -1,5 +1,6 @@
 mod config;
-mod docker_api; // <<< ADD THIS
+mod docker_api;
+mod commands;
 mod errors;
 
 use errors::Result;
@@ -15,20 +16,21 @@ async fn main() -> Result<()> {
     tracing::info!("Connecting to Docker...");
     let docker_client = docker_api::connect_to_docker().await?; // <<< ADD THIS
     tracing::info!("Docker connection successful.");
-
-    // --- Test discovery (temporary) ---
-    tracing::info!("Running initial discovery...");
-    let discovered_tasks = docker_api::discover_scheduled_tasks(&docker_client, &config).await?;
-    tracing::info!("Discovered tasks: {:?}", discovered_tasks);
-    // --- End Test ---
-
-
+    
     tracing::info!("Rust Scheduler starting setup...");
 
-    // --- Placeholder ---
+    // --- Placeholder for scheduler setup & main loop ---
+    // TODO: Initialize scheduler
+    // TODO: Add periodic discovery job
+    // TODO: Run initial discovery and schedule tasks
+    // TODO: Start scheduler & await shutdown signal
 
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-    }
-    // Ok(())
+    tracing::warn!("Scheduler setup not yet implemented. Exiting after initial checks."); // Add a temporary warning
+    // Keep running for now, but eventually replace with scheduler logic
+    // loop {
+    //     tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+    // }
+
+    Ok(()) // Exit cleanly after setup phase for now
+    
 }

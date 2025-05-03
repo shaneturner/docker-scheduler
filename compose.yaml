@@ -2,22 +2,18 @@ name: synctest
 services:
   scheduler:
     build:
-      context: ./scheduler-rs # <<< CHANGED: Point to the Rust project directory
-      dockerfile: Dockerfile   # <<< CHANGED: Specify the Dockerfile within that context
+      context: .
+      dockerfile: ./scheduler-rs/Dockerfile  
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # --- Keep existing env vars, but ensure they match Rust expectations ---
-      # RUST_LOG controls tracing level (trace, debug, info, warn, error)
       RUST_LOG: ${LOG_LEVEL:-info} # Use LOG_LEVEL from host if set, else default to info
       SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-UTC}
       SCHEDULE_INTERVAL_MINUTES: ${SCHEDULE_INTERVAL_MINUTES:-1}
       COMMAND_TIMEOUT_SECONDS: ${COMMAND_TIMEOUT_SECONDS:-600}
-      # Pass Docker Compose context/project name if they are set in the host environment
-      # The Rust app will pick these up via std::env::var
       COMPOSE_PROJECT_NAME: $COMPOSE_PROJECT_NAME
       DOCKER_CONTEXT: $DOCKER_CONTEXT
-    restart: unless-stopped # Good practice for a long-running service
+    restart: unless-stopped 
 
   my-api:
     image: nginx:alpine

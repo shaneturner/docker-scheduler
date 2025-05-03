@@ -8,17 +8,16 @@ RUN apk add --no-cache musl-dev openssl-dev build-base
 WORKDIR /app
 
 # Create dummy project to cache dependencies
-# RUN cargo init --bin scheduler-rs --name scheduler-rs # Use correct package name if different
-COPY Cargo.* ./
-# Build dependencies only (speeds up subsequent builds if dependencies don't change)
-# Create dummy main.rs to allow building deps
+COPY scheduler-rs/Cargo.* ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies only
 RUN cargo build --release
 # Clean up dummy file/dir after deps are built
-RUN rm -rf src target/release/deps/scheduler_rs* # Adjust name if needed
+RUN rm -rf src target/release/deps/scheduler_rs*
 
 # Copy actual source code
-COPY src ./src
+COPY scheduler-rs/src ./src
 
 # Build the application release binary
 # Ensure network access is available if crates need to download things during build
@@ -45,6 +44,7 @@ COPY --from=builder /app/target/release/scheduler-rs /usr/local/bin/scheduler-rs
 
 # Optional: Copy .env.example if needed within the container (unlikely)
 # COPY .env.example /app/.env.example
+COPY compose.yaml /app/compose.yaml
 
 # Set the entrypoint to the compiled binary
 ENTRYPOINT ["/usr/local/bin/scheduler-rs"]
