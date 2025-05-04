@@ -1,12 +1,15 @@
 use crate::config::Config;
 use crate::errors::{Result, SchedulerError}; // Use our custom Result and Error
-use bollard::container::{ListContainersOptions, LogsOptions, LogOutput};
+
+use bollard::container::{ListContainersOptions, LogsOptions, LogOutput}; // LogsOptions might become unused if get_container_logs isn't called
 use bollard::models::ContainerSummary;
 use bollard::Docker;
+
 use std::collections::HashMap;
 use std::default::Default;
+
 use tracing::{debug, info, instrument, warn}; // Import tracing macros
-use futures_util::TryStreamExt;
+
 
 // --- Constants for Labels ---
 const LABEL_PREFIX: &str = "custom.scheduler.";
