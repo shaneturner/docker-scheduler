@@ -34,3 +34,10 @@ chrono-tz = "0.9"  # Timezone support
 shlex = "1.3"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v5", "serde"] }
+
+[profile.release]
+lto = true           # Enable Link Time Optimization
+opt-level = 'z'      # Optimize for size ('s' is another option, 'z' is smaller)
+codegen-units = 1    # Reduce parallelism for potentially smaller binary
+panic = 'abort'      # Abort on panic instead of unwinding (can reduce size)
+strip = true         # Equivalent to running strip, but via Cargo
