@@ -4,23 +4,21 @@ mod docker_api;
 mod errors;
 mod scheduler;
 
-use errors::Result;
+use errors::SchedulerError;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-// Remove the unused Duration import
-// use std::time::Duration;
+use std::sync::Arc;
 use tokio::signal;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{error, info};
 use uuid::Uuid;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize tracing (logging)
+async fn main() -> Result<(), SchedulerError> {
     tracing_subscriber::fmt::init();
 
     info!("Loading configuration...");
-    let config = Arc::new(config::load_config().map_err(errors::SchedulerError::Config)?);
+    let config = Arc::new(config::load_config().map_err(SchedulerError::Config)?);
     info!("Configuration loaded successfully: {:?}", config);
 
     info!("Connecting to Docker...");
@@ -28,98 +26,93 @@ async fn main() -> Result<()> {
     info!("Docker connection successful.");
 
     info!("Initializing scheduler...");
-    let scheduler_instance = Arc::new(scheduler::init_scheduler(&config).await?);
+    // <-- wrap scheduler in a Mutex for interior mutability
+    let scheduler_instance = Arc::new(Mutex::new(scheduler::init_scheduler(&config).await?));
     info!("Scheduler initialized.");
 
-    // Initialize job tracking map
     let job_map = Arc::new(Mutex::new(HashMap::<String, Uuid>::new()));
 
+    // --- Start the scheduler ---
     info!("Starting scheduler...");
-    if let Err(e) = scheduler_instance.start().await {
-        error!("Failed to start scheduler: {}", e);
-        return Err(errors::SchedulerError::Other(format!("Failed to start scheduler: {}", e)));
+    {
+        let mut sched = scheduler_instance.lock().await;
+        sched
+            .start()
+            .await
+            .map_err(|e| {
+                error!("Failed to start scheduler: {}", e);
+                SchedulerError::Other(format!("Failed to start scheduler: {}", e))
+            })?;
     }
     info!("Scheduler started successfully.");
 
-    // Run initial discovery
+    // --- Initial discovery ---
     info!("Running initial discovery and scheduling...");
-    let scheduler_ref = Arc::clone(&scheduler_instance);
-    let docker_ref = Arc::clone(&docker_client);
-    let config_ref = Arc::clone(&config);
-    let job_map_ref = Arc::clone(&job_map);
-    
-    // Run initial discovery - fixed to avoid MutexGuard Send issues
-    tokio::spawn(async move {
-        // Scope to ensure the mutex guard is dropped before await
-        {
-            let mut job_map_guard = job_map_ref.lock().unwrap();
+    {
+        let sched_clone = Arc::clone(&scheduler_instance);
+        let docker_clone = Arc::clone(&docker_client);
+        let cfg_clone = Arc::clone(&config);
+        let map_clone = Arc::clone(&job_map);
+
+        tokio::spawn(async move {
+            let mut map = map_clone.lock().await;
+            // pass the Mutex-wrapped scheduler
             scheduler::discover_and_update_schedules(
-                Arc::clone(&scheduler_ref),
-                Arc::clone(&docker_ref),
-                Arc::clone(&config_ref),
-                &mut *job_map_guard,
+                sched_clone,
+                docker_clone,
+                cfg_clone,
+                &mut *map,
             )
             .await;
-        } // MutexGuard is dropped here
-    })
-    .await
-    .unwrap();
-    
+        })
+        .await
+        .map_err(|e| {
+            SchedulerError::Other(format!("Initial discovery task panicked: {:?}", e))
+        })?;
+    }
     info!("Initial discovery complete.");
 
-    // Set up periodic discovery task
-    let scheduler_ref = Arc::clone(&scheduler_instance);
-    let docker_ref = Arc::clone(&docker_client);
-    let config_ref = Arc::clone(&config);
-    let job_map_ref = Arc::clone(&job_map);
-    
-    let discovery_interval = config.schedule_interval;
-    info!("Setting up periodic discovery task (interval: {:?})...", discovery_interval);
-    
-    tokio::spawn(async move {
-        loop {
-            sleep(discovery_interval).await;
-            info!("Running periodic discovery and update...");
-            
-            // Use a block scope to ensure MutexGuard is dropped before sleep.await
-            {
-                let mut job_map_guard = match job_map_ref.lock() {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        error!("Failed to acquire job map lock: {}", e);
-                        continue;
-                    }
-                };
-                
+    // --- Periodic discovery ---
+    let interval = config.schedule_interval;
+    info!("Setting up periodic discovery task (interval: {:?})...", interval);
+    {
+        let sched_clone = Arc::clone(&scheduler_instance);
+        let docker_clone = Arc::clone(&docker_client);
+        let cfg_clone = Arc::clone(&config);
+        let map_clone = Arc::clone(&job_map);
+
+        tokio::spawn(async move {
+            loop {
+                sleep(interval).await;
+                info!("Running periodic discovery and update...");
+                let mut map = map_clone.lock().await;
                 scheduler::discover_and_update_schedules(
-                    Arc::clone(&scheduler_ref),
-                    Arc::clone(&docker_ref),
-                    Arc::clone(&config_ref),
-                    &mut *job_map_guard,
+                    sched_clone.clone(),
+                    docker_clone.clone(),
+                    cfg_clone.clone(),
+                    &mut *map,
                 )
                 .await;
-            } // MutexGuard is dropped here
-        }
-    });
-
-    info!("Scheduler running. Press Ctrl+C to exit.");
-    
-    // Wait for shutdown signal
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            info!("Shutdown signal received.");
-        }
-        Err(e) => {
-            error!("Failed to listen for shutdown signal: {}", e);
-        }
+            }
+        });
     }
 
-    // Shutdown the scheduler - fixed to handle Arc correctly
+    info!("Scheduler running. Press Ctrl+C to exit.");
+
+    // --- Wait for Ctrl+C ---
+    if let Err(e) = signal::ctrl_c().await {
+        error!("Failed to listen for shutdown signal: {}", e);
+    } else {
+        info!("Shutdown signal received.");
+    }
+
+    // --- Graceful shutdown ---
     info!("Shutting down scheduler...");
-    // Get a clone of the Arc to avoid borrow issues
-    let scheduler_for_shutdown = Arc::clone(&scheduler_instance);
-    if let Err(e) = scheduler_for_shutdown.shutdown().await {
-        error!("Error shutting down scheduler: {}", e);
+    {
+        let mut sched = scheduler_instance.lock().await;
+        if let Err(e) = sched.shutdown().await {
+            error!("Error shutting down scheduler: {}", e);
+        }
     }
     info!("Scheduler shut down successfully.");
 
