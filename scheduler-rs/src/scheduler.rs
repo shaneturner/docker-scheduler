@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tokio_cron_scheduler::{Job, JobScheduler}; 
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
-use std::future::Future; // <<< Need this for the dyn Future trait object
-use std::pin::Pin;      // <<< Need this for Pin
+use std::future::Future;
+use std::pin::Pin;
 
 #[instrument(skip(_config))]
 pub async fn init_scheduler(_config: &Config) -> Result<JobScheduler> {
@@ -46,19 +46,20 @@ pub async fn discover_and_update_schedules(
     for (job_id_str, task_config) in &discovered_map {
         match job_map.get(job_id_str) {
             Some(existing_uuid) => {
-                match scheduler.get(*existing_uuid).await { // Keep using get()
+                // Dereferencing the Arc to access the inner JobScheduler methods
+                match scheduler.as_ref().get(*existing_uuid).await {
                     Ok(Some(job_lock)) => {
                         let job = job_lock.read().await;
                         let existing_cron_str = job.schedule().to_string();
                         if existing_cron_str != task_config.cron_schedule {
                              warn!("Cron schedule changed for job '{}' ({}). Recreating.", job_id_str, existing_uuid);
-                            if let Err(e) = scheduler.remove(existing_uuid).await { // Keep using &Uuid
+                            if let Err(e) = scheduler.as_ref().remove(existing_uuid).await {
                                 error!("Failed to remove job '{}' ({}) for recreation: {}", job_id_str, existing_uuid, e);
                                 continue;
                             } else {
                                 job_map.remove(job_id_str);
                                 info!("Removed job '{}' ({}) from scheduler and map for recreation.", job_id_str, existing_uuid);
-                                match add_task_job(&scheduler, task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
+                                match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
                                     Ok(new_uuid) => { job_map.insert(job_id_str.clone(), new_uuid); }
                                     Err(e) => { error!("Failed to re-add job '{}' after modification: {}", job_id_str, e); }
                                 }
@@ -70,7 +71,7 @@ pub async fn discover_and_update_schedules(
                     Ok(None) => {
                         warn!("Job '{}' found in internal map but not in scheduler (UUID {}). Removing from map and attempting to add.", job_id_str, existing_uuid);
                         job_map.remove(job_id_str);
-                        match add_task_job(&scheduler, task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
+                        match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
                             Ok(new_uuid) => { job_map.insert(job_id_str.clone(), new_uuid); }
                             Err(e) => { error!("Failed to add job '{}' after inconsistency detected: {}", job_id_str, e); }
                         }
@@ -80,7 +81,7 @@ pub async fn discover_and_update_schedules(
             }
             None => {
                 info!("Adding newly discovered job '{}' with schedule '{}'", job_id_str, task_config.cron_schedule);
-                match add_task_job(&scheduler, task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
+                match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
                     Ok(new_uuid) => { job_map.insert(job_id_str.clone(), new_uuid); }
                     Err(e) => { error!("Failed to add new job '{}': {}", job_id_str, e); }
                 }
@@ -99,7 +100,7 @@ pub async fn discover_and_update_schedules(
     let mut removal_errors = false;
     for (job_id_str, uuid_to_remove) in stale_job_ids_to_remove {
         warn!("Removing stale job '{}' ({})", job_id_str, uuid_to_remove);
-        if let Err(e) = scheduler.remove(&uuid_to_remove).await { // Keep using &Uuid
+        if let Err(e) = scheduler.as_ref().remove(&uuid_to_remove).await {
             error!("Failed to remove stale job '{}' ({}) from scheduler: {}", job_id_str, uuid_to_remove, e);
             removal_errors = true;
         } else {
@@ -109,7 +110,7 @@ pub async fn discover_and_update_schedules(
     }
 
     // ... (Log final state logic as before, using scheduler.jobs()) ...
-    let current_scheduler_job_count = match scheduler.jobs().await { // Keep using jobs()
+    let current_scheduler_job_count = match scheduler.as_ref().jobs().await {
         Ok(jobs) => jobs.len(),
         Err(e) => { warn!("Could not list jobs from scheduler to report count: {}", e); job_map.len() }
     };
@@ -158,18 +159,16 @@ async fn add_task_job(
         config.scheduler_timezone,
         job_closure,
     )
-    // Fill in the missing fields
     .map_err(|e| SchedulerError::CronParse {
-        cron_str: task_config.cron_schedule.clone(), // <<< ADDED
-        source: Box::new(e),                         // <<< ADDED
-    })?; // <<< REMOVED placeholder /* ... */
+        cron_str: task_config.cron_schedule.clone(),
+        source: Box::new(e),
+    })?;
 
     let added_job_uuid = scheduler.add(job).await
-        // Fill in the missing fields
         .map_err(|e| SchedulerError::JobAdd {
-            job_id: task_config.job_id.clone(), // <<< ADDED
-            source: Box::new(e),                // <<< ADDED
-        })?; // <<< REMOVED placeholder /* ... */
+            job_id: task_config.job_id.clone(),
+            source: Box::new(e),
+        })?;
 
     info!("Successfully added job '{}' to scheduler with UUID: {}", task_config.job_id, added_job_uuid);
     Ok(added_job_uuid)
