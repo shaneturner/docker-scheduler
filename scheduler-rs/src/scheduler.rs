@@ -47,38 +47,44 @@ pub async fn discover_and_update_schedules(
 
     // Add or recreate jobs
     for (job_id_str, task_config) in &discovered_map {
-        if let Some(existing_uuid) = job_map.get(job_id_str).copied() {
-            warn!(
-                "Job '{}' exists with UUID {}. Removing and recreating to ensure updated schedule.",
-                job_id_str, existing_uuid
+        if let Some(existing_uuid) = job_map.get(job_id_str).copied() { // Keep UUID for removal logic
+            info!(
+                // Modify message: Remove UUID placeholder
+                "Job '{}' exists. Removing and recreating to ensure updated schedule.",
+                job_id_str
             );
             {
                 let sched = scheduler.lock().await;
-                if let Err(e) = sched.remove(&existing_uuid).await {
+                if let Err(e) = sched.remove(&existing_uuid).await { // Need UUID here
                     error!(
-                        "Failed to remove job '{}' ({}) for recreation: {}",
-                        job_id_str, existing_uuid, e
+                        // Modify message: Remove UUID placeholder
+                        "Failed to remove job '{}' for recreation: {}",
+                        job_id_str, e
                     );
                     continue;
                 }
             }
-            job_map.remove(job_id_str);
+            job_map.remove(job_id_str); // Remove from map using job_id_str
             info!(
-                "Removed job '{}' ({}) from scheduler and map for recreation.",
-                job_id_str, existing_uuid
+                // Modify message: Remove UUID placeholder
+                "Removed job '{}' from scheduler and map for recreation.",
+                job_id_str
             );
 
             match add_task_job(
                 Arc::clone(&scheduler),
                 task_config,
-                Arc::clone(&docker_client),
                 Arc::clone(&config),
             )
             .await
             {
                 Ok(new_uuid) => {
-                    job_map.insert(job_id_str.clone(), new_uuid);
-                    info!("Re-added job '{}' with new UUID {}", job_id_str, new_uuid);
+                    job_map.insert(job_id_str.clone(), new_uuid); // Need new_uuid for map
+                    info!(
+                        // Modify message: Remove UUID placeholder
+                        "Re-added job '{}'.",
+                        job_id_str
+                    );
                 }
                 Err(e) => {
                     error!("Failed to re-add job '{}' after modification: {}", job_id_str, e);
@@ -92,14 +98,17 @@ pub async fn discover_and_update_schedules(
             match add_task_job(
                 Arc::clone(&scheduler),
                 task_config,
-                Arc::clone(&docker_client),
                 Arc::clone(&config),
             )
             .await
             {
                 Ok(new_uuid) => {
-                    job_map.insert(job_id_str.clone(), new_uuid);
-                    info!("Added new job '{}' with UUID {}", job_id_str, new_uuid);
+                    job_map.insert(job_id_str.clone(), new_uuid); // Need new_uuid for map
+                    info!(
+                        // Modify message: Remove UUID placeholder
+                        "Added new job '{}'.",
+                        job_id_str
+                    );
                 }
                 Err(e) => {
                     error!("Failed to add new job '{}': {}", job_id_str, e);
@@ -111,27 +120,34 @@ pub async fn discover_and_update_schedules(
     // Remove stale jobs
     info!("Checking for stale jobs to remove...");
     let mut stale = Vec::new();
-    for (job_id_str, uuid) in job_map.iter() {
+    for (job_id_str, uuid) in job_map.iter() { // Need UUID for removal logic
         if !active_job_ids_this_cycle.contains(job_id_str) {
             stale.push((job_id_str.clone(), *uuid));
         }
     }
     let mut had_errors = false;
-    for (job_id_str, uuid_to_remove) in stale {
-        warn!("Removing stale job '{}' ({})", job_id_str, uuid_to_remove);
+    for (job_id_str, uuid_to_remove) in stale { // Need UUID for removal logic
+        warn!(
+            // Modify message: Remove UUID placeholder
+            "Removing stale job '{}'", job_id_str
+        );
         {
             let sched = scheduler.lock().await;
-            if let Err(e) = sched.remove(&uuid_to_remove).await {
+            if let Err(e) = sched.remove(&uuid_to_remove).await { // Need UUID here
                 error!(
-                    "Failed to remove stale job '{}' ({}) from scheduler: {}",
-                    job_id_str, uuid_to_remove, e
+                    // Modify message: Remove UUID placeholder
+                    "Failed to remove stale job '{}' from scheduler: {}",
+                    job_id_str, e
                 );
                 had_errors = true;
                 continue;
             }
         }
-        job_map.remove(&job_id_str);
-        info!("Successfully removed stale job '{}' ({})", job_id_str, uuid_to_remove);
+        job_map.remove(&job_id_str); // Remove from map using job_id_str
+        info!(
+            // Modify message: Remove UUID placeholder
+            "Successfully removed stale job '{}'", job_id_str
+        );
     }
 
     info!(
@@ -144,19 +160,20 @@ pub async fn discover_and_update_schedules(
 async fn add_task_job(
     scheduler: Arc<Mutex<JobScheduler>>,
     task_config: &JobConfig,
-    docker_client: Arc<Docker>,
     config: Arc<Config>,
-) -> Result<Uuid> {
+) -> Result<Uuid> { // Still need to return Uuid for the map
     let action = task_config.action.clone();
     let service_name = task_config.service_name.clone();
     let command_str = task_config.command.clone();
     let job_id_str = task_config.job_id.clone();
     let config_clone = Arc::clone(&config);
 
-    // Note: pass &str, not &String
-    let cron_expr: &str = task_config.cron_schedule.as_str();
+    let standard_cron = task_config.cron_schedule.as_str();
+    let full_cron = format!("0 {}", standard_cron);
 
-    let job_closure = move |job_uuid: Uuid, _ctx: JobScheduler| {
+    debug!("Converting cron from '{}' to '{}'", standard_cron, full_cron);
+
+    let job_closure = move |_job_uuid: Uuid, _ctx: JobScheduler| { // job_uuid is passed by the scheduler, keep it in the closure signature
         let inner_action = action.clone();
         let inner_service_name = service_name.clone();
         let inner_command_str = command_str.clone();
@@ -165,7 +182,8 @@ async fn add_task_job(
 
         Box::pin(async move {
             info!(
-                job_uuid = %job_uuid,
+                // Modify message: Remove job_uuid field
+                // job_uuid = %job_uuid,
                 job_id = %inner_job_id_str,
                 service = %inner_service_name,
                 action = %inner_action,
@@ -180,13 +198,15 @@ async fn add_task_job(
             .await
             {
                 Ok(_) => info!(
-                    job_uuid = %job_uuid,
+                    // Modify message: Remove job_uuid field
+                    // job_uuid = %job_uuid,
                     job_id = %inner_job_id_str,
                     service = %inner_service_name,
                     "Scheduled job completed successfully."
                 ),
                 Err(e) => error!(
-                    job_uuid = %job_uuid,
+                    // Modify message: Remove job_uuid field
+                    // job_uuid = %job_uuid,
                     job_id = %inner_job_id_str,
                     service = %inner_service_name,
                     "Scheduled job failed: {}",
@@ -197,7 +217,7 @@ async fn add_task_job(
     };
 
     let job = Job::new_async_tz(
-        cron_expr,
+        full_cron.as_str(),
         config.scheduler_timezone,
         job_closure,
     )
@@ -206,8 +226,8 @@ async fn add_task_job(
         source: Box::new(e),
     })?;
 
-    let added_uuid = {
-        let mut lock = scheduler.lock().await;
+    let added_uuid = { // Need the Uuid to return
+        let lock = scheduler.lock().await;
         lock.add(job)
             .await
             .map_err(|e| SchedulerError::JobAdd {
@@ -217,8 +237,9 @@ async fn add_task_job(
     };
 
     info!(
-        "Successfully added job '{}' to scheduler with UUID: {}",
-        task_config.job_id, added_uuid
+        // Modify message: Remove UUID placeholder
+        "Successfully added job '{}' to scheduler.",
+        task_config.job_id
     );
-    Ok(added_uuid)
+    Ok(added_uuid) // Still return the Uuid
 }

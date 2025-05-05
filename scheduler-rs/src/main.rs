@@ -11,11 +11,16 @@ use tokio::signal;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{error, info};
+use tracing_subscriber::{fmt, EnvFilter};
 use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), SchedulerError> {
-    tracing_subscriber::fmt::init();
+    fmt()
+        .with_env_filter(EnvFilter::from_default_env()) // Optional: Keeps RUST_LOG functionality
+        .with_target(false) // <-- This line removes the module path (target)
+        // .with_timer(fmt::time::UtcTime::rfc_3339()) // Optional: Customize timestamp if needed
+        .init(); // Initialize the subscriber
 
     info!("Loading configuration...");
     let config = Arc::new(config::load_config().map_err(SchedulerError::Config)?);
@@ -35,14 +40,11 @@ async fn main() -> Result<(), SchedulerError> {
     // --- Start the scheduler ---
     info!("Starting scheduler...");
     {
-        let mut sched = scheduler_instance.lock().await;
-        sched
-            .start()
-            .await
-            .map_err(|e| {
-                error!("Failed to start scheduler: {}", e);
-                SchedulerError::Other(format!("Failed to start scheduler: {}", e))
-            })?;
+        let sched = scheduler_instance.lock().await;
+        sched.start().await.map_err(|e| {
+            error!("Failed to start scheduler: {}", e);
+            SchedulerError::Other(format!("Failed to start scheduler: {}", e))
+        })?;
     }
     info!("Scheduler started successfully.");
 
@@ -56,7 +58,6 @@ async fn main() -> Result<(), SchedulerError> {
 
         tokio::spawn(async move {
             let mut map = map_clone.lock().await;
-            // pass the Mutex-wrapped scheduler
             scheduler::discover_and_update_schedules(
                 sched_clone,
                 docker_clone,

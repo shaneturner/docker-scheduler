@@ -53,22 +53,6 @@ pub enum SchedulerError {
         source: Box<dyn std::error::Error + Send + Sync>, // << CORRECTED ::
     },
 
-    #[error("Failed to modify job '{job_id}': {source}")]
-    JobModify {
-        job_id: String,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>, // << CORRECTED ::
-    },
-
-    #[error("Failed to remove job '{job_id}': {source}")]
-    JobRemove {
-        job_id: String,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>, // << CORRECTED ::
-    },
-
-    #[error("Invalid timezone identifier: {0}")]
-    InvalidTimezone(String),
 
     #[error("Label parsing error for container {container_id}: {message}")]
     LabelParse {

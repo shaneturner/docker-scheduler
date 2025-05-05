@@ -12,7 +12,7 @@ use tracing::{debug, info, instrument, warn}; // Import tracing macros
 
 
 // --- Constants for Labels ---
-const LABEL_PREFIX: &str = "custom.scheduler.";
+// const LABEL_PREFIX: &str = "custom.scheduler.";
 const LABEL_ENABLE: &str = "custom.scheduler.enable";
 const LABEL_ACTION: &str = "custom.scheduler.action";
 const LABEL_COMMAND: &str = "custom.scheduler.command";
