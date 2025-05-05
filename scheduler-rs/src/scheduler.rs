@@ -30,7 +30,7 @@ pub async fn discover_and_update_schedules(
     job_map: &mut HashMap<String, Uuid>,
 ) {
     info!("Starting schedule discovery and update cycle...");
-    // ... (Discovery logic as before) ...
+    // Discover tasks from Docker
     let discovered_tasks = match docker_api::discover_scheduled_tasks(&docker_client, &config).await
     {
         Ok(tasks) => tasks,
@@ -42,54 +42,58 @@ pub async fn discover_and_update_schedules(
         .collect();
     let active_job_ids_this_cycle: HashSet<String> = discovered_map.keys().cloned().collect();
 
-    // ... (Add/Modify/Check logic as before, using scheduler.get() and scheduler.remove()) ...
+    // Get the current job count
+    match scheduler.as_ref().jobs_count().await {
+        Ok(count) => debug!("Current job count before update: {}", count),
+        Err(e) => warn!("Failed to get job count: {}", e),
+    }
+
+    // Process all discovered tasks
     for (job_id_str, task_config) in &discovered_map {
-        match job_map.get(job_id_str) {
-            Some(existing_uuid) => {
-                // Dereferencing the Arc to access the inner JobScheduler methods
-                match scheduler.as_ref().get(*existing_uuid).await {
-                    Ok(Some(job_lock)) => {
-                        let job = job_lock.read().await;
-                        let existing_cron_str = job.schedule().to_string();
-                        if existing_cron_str != task_config.cron_schedule {
-                             warn!("Cron schedule changed for job '{}' ({}). Recreating.", job_id_str, existing_uuid);
-                            if let Err(e) = scheduler.as_ref().remove(existing_uuid).await {
-                                error!("Failed to remove job '{}' ({}) for recreation: {}", job_id_str, existing_uuid, e);
-                                continue;
-                            } else {
-                                job_map.remove(job_id_str);
-                                info!("Removed job '{}' ({}) from scheduler and map for recreation.", job_id_str, existing_uuid);
-                                match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
-                                    Ok(new_uuid) => { job_map.insert(job_id_str.clone(), new_uuid); }
-                                    Err(e) => { error!("Failed to re-add job '{}' after modification: {}", job_id_str, e); }
-                                }
-                            }
-                        } else {
-                            debug!("Job '{}' ({}) is up-to-date.", job_id_str, existing_uuid);
-                        }
-                    }
-                    Ok(None) => {
-                        warn!("Job '{}' found in internal map but not in scheduler (UUID {}). Removing from map and attempting to add.", job_id_str, existing_uuid);
-                        job_map.remove(job_id_str);
-                        match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
-                            Ok(new_uuid) => { job_map.insert(job_id_str.clone(), new_uuid); }
-                            Err(e) => { error!("Failed to add job '{}' after inconsistency detected: {}", job_id_str, e); }
-                        }
-                    }
-                    Err(e) => { error!("Error checking job '{}' ({}) in scheduler: {}. Skipping update.", job_id_str, existing_uuid, e); }
+        // Since we can't check if the job exists directly with newer API versions,
+        // we'll maintain our job map and just remove/readd if needed
+        if job_map.contains_key(job_id_str) {
+            // Check if the cron schedule has changed
+            let existing_uuid = job_map[job_id_str];
+            warn!("Job '{}' exists with UUID {}. Removing and recreating to ensure updated schedule.", 
+                job_id_str, existing_uuid);
+            
+            // Always remove and re-add to ensure latest schedule is used
+            if let Err(e) = scheduler.as_ref().remove(&existing_uuid).await {
+                error!("Failed to remove job '{}' ({}) for recreation: {}", job_id_str, existing_uuid, e);
+                continue;
+            }
+            
+            // Remove from map before re-adding
+            job_map.remove(job_id_str);
+            info!("Removed job '{}' ({}) from scheduler and map for recreation.", job_id_str, existing_uuid);
+            
+            // Add the job again
+            match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
+                Ok(new_uuid) => { 
+                    job_map.insert(job_id_str.clone(), new_uuid);
+                    info!("Re-added job '{}' with new UUID {}", job_id_str, new_uuid);
+                }
+                Err(e) => { 
+                    error!("Failed to re-add job '{}' after modification: {}", job_id_str, e);
                 }
             }
-            None => {
-                info!("Adding newly discovered job '{}' with schedule '{}'", job_id_str, task_config.cron_schedule);
-                match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
-                    Ok(new_uuid) => { job_map.insert(job_id_str.clone(), new_uuid); }
-                    Err(e) => { error!("Failed to add new job '{}': {}", job_id_str, e); }
+        } else {
+            // Job doesn't exist yet, add it
+            info!("Adding newly discovered job '{}' with schedule '{}'", job_id_str, task_config.cron_schedule);
+            match add_task_job(scheduler.as_ref(), task_config, Arc::clone(&docker_client), Arc::clone(&config)).await {
+                Ok(new_uuid) => { 
+                    job_map.insert(job_id_str.clone(), new_uuid);
+                    info!("Added new job '{}' with UUID {}", job_id_str, new_uuid);
+                }
+                Err(e) => { 
+                    error!("Failed to add new job '{}': {}", job_id_str, e);
                 }
             }
         }
     }
 
-    // ... (Remove Stale Jobs logic as before, using scheduler.remove()) ...
+    // Check for stale jobs to remove
     info!("Checking for stale jobs to remove...");
     let mut stale_job_ids_to_remove = Vec::new();
     for (job_id_str, uuid) in job_map.iter() {
@@ -109,11 +113,15 @@ pub async fn discover_and_update_schedules(
         }
     }
 
-    // ... (Log final state logic as before, using scheduler.jobs()) ...
-    let current_scheduler_job_count = match scheduler.as_ref().jobs().await {
-        Ok(jobs) => jobs.len(),
-        Err(e) => { warn!("Could not list jobs from scheduler to report count: {}", e); job_map.len() }
+    // Get final job count
+    let current_scheduler_job_count = match scheduler.as_ref().jobs_count().await {
+        Ok(count) => count,
+        Err(e) => { 
+            warn!("Could not get job count from scheduler: {}", e); 
+            job_map.len() 
+        }
     };
+    
     info!(
         "Schedule update cycle complete. Jobs tracked in map: {}. Jobs in scheduler: {}.{}",
         job_map.len(), current_scheduler_job_count, if removal_errors { " (Errors occurred during removal)" } else { "" }

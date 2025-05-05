@@ -7,7 +7,8 @@ mod scheduler;
 use errors::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+// Remove the unused Duration import
+// use std::time::Duration;
 use tokio::signal;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -47,16 +48,19 @@ async fn main() -> Result<()> {
     let config_ref = Arc::clone(&config);
     let job_map_ref = Arc::clone(&job_map);
     
-    // Run initial discovery
+    // Run initial discovery - fixed to avoid MutexGuard Send issues
     tokio::spawn(async move {
-        let mut job_map_guard = job_map_ref.lock().unwrap();
-        scheduler::discover_and_update_schedules(
-            scheduler_ref,
-            docker_ref,
-            config_ref,
-            &mut job_map_guard,
-        )
-        .await;
+        // Scope to ensure the mutex guard is dropped before await
+        {
+            let mut job_map_guard = job_map_ref.lock().unwrap();
+            scheduler::discover_and_update_schedules(
+                Arc::clone(&scheduler_ref),
+                Arc::clone(&docker_ref),
+                Arc::clone(&config_ref),
+                &mut *job_map_guard,
+            )
+            .await;
+        } // MutexGuard is dropped here
     })
     .await
     .unwrap();
@@ -77,21 +81,24 @@ async fn main() -> Result<()> {
             sleep(discovery_interval).await;
             info!("Running periodic discovery and update...");
             
-            let mut job_map_guard = match job_map_ref.lock() {
-                Ok(guard) => guard,
-                Err(e) => {
-                    error!("Failed to acquire job map lock: {}", e);
-                    continue;
-                }
-            };
-            
-            scheduler::discover_and_update_schedules(
-                Arc::clone(&scheduler_ref),
-                Arc::clone(&docker_ref),
-                Arc::clone(&config_ref),
-                &mut job_map_guard,
-            )
-            .await;
+            // Use a block scope to ensure MutexGuard is dropped before sleep.await
+            {
+                let mut job_map_guard = match job_map_ref.lock() {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        error!("Failed to acquire job map lock: {}", e);
+                        continue;
+                    }
+                };
+                
+                scheduler::discover_and_update_schedules(
+                    Arc::clone(&scheduler_ref),
+                    Arc::clone(&docker_ref),
+                    Arc::clone(&config_ref),
+                    &mut *job_map_guard,
+                )
+                .await;
+            } // MutexGuard is dropped here
         }
     });
 
@@ -107,9 +114,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Shutdown the scheduler
+    // Shutdown the scheduler - fixed to handle Arc correctly
     info!("Shutting down scheduler...");
-    if let Err(e) = scheduler_instance.shutdown().await {
+    // Get a clone of the Arc to avoid borrow issues
+    let scheduler_for_shutdown = Arc::clone(&scheduler_instance);
+    if let Err(e) = scheduler_for_shutdown.shutdown().await {
         error!("Error shutting down scheduler: {}", e);
     }
     info!("Scheduler shut down successfully.");
